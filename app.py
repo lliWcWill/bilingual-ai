@@ -3,13 +3,10 @@ import time
 import os
 import tempfile
 import requests
-from gtts import gTTS
-import pygame
-from audio_handler_streamlit import StreamlitAudioRecorder
+from streamlit_mic_recorder import mic_recorder
 from transcription import Transcriber
 from config import LOGGERS, ELEVEN_LABS_API_KEY, VOICE_CONFIG, INTERFACE_TEXT
 from audio_player import create_audio_player
-# Audio player for TTS playback
 
 # Get UI logger
 ui_logger = LOGGERS['ui']
@@ -474,16 +471,15 @@ def init_session_state():
     ui_logger.debug("Initializing session state variables")
     
     defaults = {
-        'recording': False,
         'audio_file': None,
         'transcription': "",
         'translation': "",
         'auto_play': False,
         'language_mode': "English → Spanish",
-        'recording_start_time': None,
         'last_error': None,
         'interface_language': 'english',  # english or spanish
-        'selected_voice_gender': 'male'   # male or female
+        'selected_voice_gender': 'male',   # male or female
+        'last_audio_data': None
     }
     
     for key, default_value in defaults.items():
@@ -494,17 +490,11 @@ def init_session_state():
 init_session_state()
 
 # Initialize components
-@st.cache_resource
-def get_audio_recorder():
-    ui_logger.info("Initializing audio recorder")
-    return StreamlitAudioRecorder()
-
 @st.cache_resource(show_spinner=False)
 def get_transcriber(version="v2_with_bidirectional_translation"):
     ui_logger.info("Initializing transcriber with translate_text_to_english support")
     return Transcriber()
 
-recorder = get_audio_recorder()
 transcriber = get_transcriber()
 
 def text_to_speech(text, lang='es'):
@@ -588,17 +578,10 @@ def eleven_labs_tts(text, voice_id):
         return None
 
 def play_audio(file_path):
-    """Play audio file with logging"""
-    tts_logger.info(f"Playing audio: {file_path}")
-    try:
-        pygame.mixer.init()
-        pygame.mixer.music.load(file_path)
-        pygame.mixer.music.play()
-        tts_logger.info("Audio playback started successfully")
-        return True
-    except Exception as e:
-        tts_logger.error(f"Audio playback failed: {e}")
-        return False
+    """Play audio file with logging - Streamlit Cloud compatible"""
+    tts_logger.info(f"Audio ready for playback: {file_path}")
+    # Audio playback is handled by the HTML audio player component
+    return True
 
 # Main UI
 def main():
@@ -801,25 +784,12 @@ def main():
                 st.markdown(f"<div style='text-align: center; color: #00d4ff; font-size: 0.8rem; margin-top: 0.5rem;'>✓ {confirmation}</div>", unsafe_allow_html=True)
     
     # Status display with modern audio visualizer
-    duration_text = ""
-    if st.session_state.recording and st.session_state.recording_start_time:
-        duration = time.time() - st.session_state.recording_start_time
-        duration_text = f" ({duration:.1f}s)"
-    
-    if st.session_state.recording:
-        status_class = "status-recording"
-        status_text = f"{text['recording']}{duration_text}"
-        card_class = "status-card recording"
-        ring_class = "recording"
-        spectrum_class = "recording"
-        mic_class = "recording"
-    else:
-        status_class = "status-ready"
-        status_text = f"{text['ready_to_translate']}: {st.session_state.language_mode}"
-        card_class = "status-card"
-        ring_class = ""
-        spectrum_class = ""
-        mic_class = ""
+    status_class = "status-ready"
+    status_text = f"{text['ready_to_translate']}: {st.session_state.language_mode}"
+    card_class = "status-card"
+    ring_class = ""
+    spectrum_class = ""
+    mic_class = ""
     
     # Modern audio visualizer status display
     st.markdown(f"""
@@ -845,58 +815,62 @@ def main():
     </div>
     """, unsafe_allow_html=True)
     
-    # Recording button with minimal styling to blend in
+    # Web-based audio recorder (Streamlit Cloud compatible)
+    st.markdown("---")
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        button_text = text["tap_to_record"] if not st.session_state.recording else text["stop_recording"]
-        if st.button(button_text, key="main_recording_btn", use_container_width=True):
-            if not st.session_state.recording:
-                ui_logger.info("User started recording")
-                if recorder.start_recording():
-                    st.session_state.recording = True
-                    st.session_state.recording_start_time = time.time()
-                    ui_logger.info("Recording started successfully")
-                    st.rerun()
-                else:
-                    ui_logger.error("Failed to start recording")
-                    st.session_state.last_error = "Failed to start recording"
-            else:
-                ui_logger.info("User stopped recording")
-                st.session_state.recording = False
+        st.markdown(f"### {text.get('record_audio', '🎤 Record Audio')}")
+        
+        # Use the mic recorder component (most reliable for Streamlit Cloud)
+        audio = mic_recorder(
+            start_prompt="🎤 Start Recording",
+            stop_prompt="⏹️ Stop Recording", 
+            format="wav",
+            use_container_width=True,
+            key="main_mic_recorder"
+        )
+        
+        # Process audio when recording is complete
+        if audio and audio != st.session_state.get('last_audio_data'):
+            st.session_state.last_audio_data = audio
+            audio_bytes = audio['bytes'] if isinstance(audio, dict) else audio
+            
+            with st.spinner("Processing audio..."):
+                ui_logger.info("Processing recorded audio")
                 
-                # Process audio
-                with st.spinner("Processing audio..."):
-                    ui_logger.info("Processing recorded audio")
-                    audio_file = recorder.stop_recording()
+                # Save audio to temporary file
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_file:
+                    temp_file.write(audio_bytes)
+                    audio_file = temp_file.name
+                
+                if audio_file:
+                    ui_logger.info(f"Audio processing successful: {audio_file}")
+                    st.session_state.audio_file = audio_file
                     
-                    if audio_file:
-                        ui_logger.info(f"Audio processing successful: {audio_file}")
-                        st.session_state.audio_file = audio_file
+                    if st.session_state.language_mode == "English → Spanish":
+                        ui_logger.info("Starting English → Spanish translation workflow")
+                        # English to Spanish
+                        english_text = transcriber.transcribe_audio(audio_file, language="en")
+                        st.session_state.transcription = english_text
                         
-                        if st.session_state.language_mode == "English → Spanish":
-                            ui_logger.info("Starting English → Spanish translation workflow")
-                            # English to Spanish
-                            english_text = transcriber.transcribe_audio(audio_file, language="en")
-                            st.session_state.transcription = english_text
-                            
-                            if english_text and not english_text.startswith("Error"):
-                                spanish_text = transcriber.translate_text_to_spanish(english_text)
-                                st.session_state.translation = spanish_text
-                                ui_logger.info("English → Spanish workflow completed")
-                            else:
-                                ui_logger.error(f"Transcription failed: {english_text}")
+                        if english_text and not english_text.startswith("Error"):
+                            spanish_text = transcriber.translate_text_to_spanish(english_text)
+                            st.session_state.translation = spanish_text
+                            ui_logger.info("English → Spanish workflow completed")
                         else:
-                            ui_logger.info("Starting Spanish → English translation workflow")
-                            # Spanish to English  
-                            english_translation = transcriber.translate_audio(audio_file)
-                            st.session_state.translation = english_translation
-                            st.session_state.transcription = "Spanish audio"
-                            ui_logger.info("Spanish → English workflow completed")
+                            ui_logger.error(f"Transcription failed: {english_text}")
                     else:
-                        ui_logger.error("Audio processing failed - no file returned")
-                        st.session_state.last_error = "Failed to process audio"
-                
-                st.rerun()
+                        ui_logger.info("Starting Spanish → English translation workflow")
+                        # Spanish to English  
+                        english_translation = transcriber.translate_audio(audio_file)
+                        st.session_state.translation = english_translation
+                        st.session_state.transcription = "Spanish audio"
+                        ui_logger.info("Spanish → English workflow completed")
+                else:
+                    ui_logger.error("Audio processing failed - no file returned")
+                    st.session_state.last_error = "Failed to process audio"
+            
+            st.rerun()
     
     
     # Add some spacing before results
@@ -995,7 +969,7 @@ def main():
                     if audio_path:
                         tts_logger.info(f"Generated Spanish TTS audio: {audio_path}")
                         # Check if auto-play is enabled
-                        should_autoplay = st.session_state.auto_play and not st.session_state.recording
+                        should_autoplay = st.session_state.auto_play
                         if should_autoplay:
                             tts_logger.info("Auto-playing translation")
                         create_audio_player(audio_path, "Spanish Translation", autoplay=should_autoplay)
@@ -1061,7 +1035,7 @@ def main():
                     if audio_path:
                         tts_logger.info(f"Generated English TTS audio: {audio_path}")
                         # Check if auto-play is enabled
-                        should_autoplay = st.session_state.auto_play and not st.session_state.recording
+                        should_autoplay = st.session_state.auto_play
                         if should_autoplay:
                             tts_logger.info("Auto-playing translation")
                         create_audio_player(audio_path, "English Translation", autoplay=should_autoplay)
