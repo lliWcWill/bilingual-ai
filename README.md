@@ -68,15 +68,15 @@ Powered by Groq's revolutionary LPU™ Inference Engine:
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/bilingual-ai.git
+git clone https://github.com/lliWcWill/bilingual-ai.git
 cd bilingual-ai
 
 # Install dependencies
 pip install -r requirements.txt
 
-# Configure API keys
-cp .streamlit/secrets.toml.example .streamlit/secrets.toml
-# Edit .streamlit/secrets.toml with your API keys
+# Configure API keys for local development
+cp .env.example .env
+# Edit .env with your API keys
 ```
 
 ### Running Locally
@@ -96,10 +96,18 @@ Navigate to `http://localhost:8501` in your browser.
 3. Deploy from your GitHub repository
 4. Add your API keys in the Streamlit dashboard under "Secrets"
 
-### Environment Variables
+### API Keys Setup
 
+**Local Development:**
+```bash
+# .env file
+GROQ_API_KEY=your_groq_api_key
+ELEVEN_LABS=your_elevenlabs_api_key
+```
+
+**Streamlit Cloud Deployment:**
+Add these in your Streamlit dashboard under "Secrets":
 ```toml
-# .streamlit/secrets.toml
 GROQ_API_KEY = "your_groq_api_key"
 ELEVEN_LABS = "your_elevenlabs_api_key"
 LOG_LEVEL = "INFO"

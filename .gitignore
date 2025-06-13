@@ -1,6 +1,7 @@
 .env
+.streamlit/secrets.toml
 venv/
 __pycache__/
 *.pyc
 temp_audio.wav
-*.wav.streamlit/secrets.toml
+*.wav
